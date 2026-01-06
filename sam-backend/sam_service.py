@@ -128,8 +128,19 @@ class SAMService:
             multimask_output=True,
         )
 
-        # 最もスコアの高いマスクを選択
-        best_idx = np.argmax(scores)
+        # スコア閾値を満たす中で最大面積のマスクを選択
+        # （部分的な高スコアより全体を優先）
+        MIN_SCORE_THRESHOLD = 0.5
+        valid_indices = [i for i, s in enumerate(scores) if s >= MIN_SCORE_THRESHOLD]
+
+        if not valid_indices:
+            # フォールバック: 閾値を満たすマスクがない場合は最高スコアを選択
+            best_idx = np.argmax(scores)
+        else:
+            # 閾値を満たすマスクの中で最大面積を選択
+            areas = [masks[i].sum() for i in valid_indices]
+            best_idx = valid_indices[np.argmax(areas)]
+
         mask = masks[best_idx]
 
         # マスクが空の場合

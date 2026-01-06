@@ -7,7 +7,7 @@ import { ObjectForm } from '../components/ObjectForm'
 import { WarehouseDialog } from '../components/WarehouseDialog'
 import { PhotoDialog } from '../components/PhotoDialog'
 import { ExportImportBar } from '../components/ExportImportBar'
-import { clipImage } from '../utils/imageUtils'
+import { clipImage, clipImageWithPolygon } from '../utils/imageUtils'
 import { exportData, importData, generateExportFileName } from '../utils/exportImport'
 import { segment, checkSamHealth, polygonToBoundingBox } from '../utils/samApi'
 import type { RectMask, PolygonMask } from '../types/storage'
@@ -154,16 +154,13 @@ export function RegistrationView() {
         points: result.polygon,
       }
 
-      // バウンディングボックスで画像を切り出し
+      // ポリゴン形状で画像を切り出し（ポリゴン外は透明）
       const bbox = polygonToBoundingBox(result.polygon)
-      const rectMask: RectMask = {
-        type: 'rect',
-        x: bbox.x,
-        y: bbox.y,
-        width: bbox.width,
-        height: bbox.height,
-      }
-      const previewImageDataUrl = await clipImage(currentPhoto.imageDataUrl, rectMask)
+      const previewImageDataUrl = await clipImageWithPolygon(
+        currentPhoto.imageDataUrl,
+        result.polygon,
+        bbox
+      )
 
       const clickPoint = { x: clickX, y: clickY }
       setSelectionState({ mask, previewImageDataUrl, clickPoint })

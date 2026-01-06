@@ -7,6 +7,16 @@ export interface Position {
 }
 
 /**
+ * バウンディングボックス
+ */
+export interface BoundingBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
  * ポリゴンマスク (SAM検出結果)
  */
 export interface PolygonMask {
