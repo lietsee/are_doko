@@ -8,6 +8,7 @@ import { PhotoDialog } from '../components/PhotoDialog'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ObjectForm } from '../components/ObjectForm'
 import { ExportImportBar } from '../components/ExportImportBar'
+import { ImportDialog } from '../components/ImportDialog'
 import { exportData, importData, generateExportFileName } from '../utils/exportImport'
 import type { StorageObject } from '../types/storage'
 
@@ -47,6 +48,7 @@ export function MainView() {
   const [deletePhotoTarget, setDeletePhotoTarget] = useState<{ warehouseId: string; photoId: string } | null>(null)
   const [editingPhotoTarget, setEditingPhotoTarget] = useState<{ warehouseId: string; photoId: string } | null>(null)
   const [editingPhotoName, setEditingPhotoName] = useState('')
+  const [importJson, setImportJson] = useState<string | null>(null)
 
   // 現在の倉庫を取得
   const currentWarehouse = warehouses.find((w) => w.id === currentWarehouseId)
@@ -216,13 +218,41 @@ export function MainView() {
 
   // インポート
   const handleImport = (json: string) => {
+    // JSONを検証してからダイアログを表示
+    try {
+      JSON.parse(json)
+      setImportJson(json)
+    } catch {
+      alert('JSONの解析に失敗しました')
+    }
+  }
+
+  const handleImportOverwrite = () => {
+    if (!importJson) return
     const existingData = getAppData()
-    const result = importData(json, 'overwrite', existingData)
+    const result = importData(importJson, 'overwrite', existingData)
     if (result.success && result.data) {
       setInitialData(result.data)
     } else {
       alert(result.error || 'インポートに失敗しました')
     }
+    setImportJson(null)
+  }
+
+  const handleImportMerge = () => {
+    if (!importJson) return
+    const existingData = getAppData()
+    const result = importData(importJson, 'merge', existingData)
+    if (result.success && result.data) {
+      setInitialData(result.data)
+    } else {
+      alert(result.error || 'インポートに失敗しました')
+    }
+    setImportJson(null)
+  }
+
+  const handleImportCancel = () => {
+    setImportJson(null)
   }
 
   return (
@@ -340,7 +370,13 @@ export function MainView() {
       <ConfirmDialog
         isOpen={deleteWarehouseTarget !== null}
         title="倉庫の削除"
-        message={`「${warehouses.find((w) => w.id === deleteWarehouseTarget)?.name}」を削除しますか？写真やオブジェクトも全て削除されます。`}
+        message={(() => {
+          const warehouse = warehouses.find((w) => w.id === deleteWarehouseTarget)
+          if (!warehouse) return ''
+          const photoCount = warehouse.photos.length
+          const objectCount = warehouse.photos.reduce((sum, p) => sum + p.objects.length, 0)
+          return `「${warehouse.name}」を削除しますか？写真${photoCount}件、オブジェクト${objectCount}件も削除されます。`
+        })()}
         onConfirm={handleConfirmDeleteWarehouse}
         onCancel={() => setDeleteWarehouseTarget(null)}
       />
@@ -349,7 +385,14 @@ export function MainView() {
       <ConfirmDialog
         isOpen={deletePhotoTarget !== null}
         title="写真の削除"
-        message={`写真を削除しますか？登録されたオブジェクトも全て削除されます。`}
+        message={(() => {
+          if (!deletePhotoTarget) return ''
+          const warehouse = warehouses.find((w) => w.id === deletePhotoTarget.warehouseId)
+          const photo = warehouse?.photos.find((p) => p.id === deletePhotoTarget.photoId)
+          if (!photo) return ''
+          const objectCount = photo.objects.length
+          return `「${photo.name}」を削除しますか？オブジェクト${objectCount}件も削除されます。`
+        })()}
         onConfirm={handleConfirmDeletePhoto}
         onCancel={() => setDeletePhotoTarget(null)}
       />
@@ -394,6 +437,14 @@ export function MainView() {
           </div>
         </div>
       )}
+
+      {/* インポートモード選択ダイアログ */}
+      <ImportDialog
+        isOpen={importJson !== null}
+        onOverwrite={handleImportOverwrite}
+        onMerge={handleImportMerge}
+        onCancel={handleImportCancel}
+      />
     </div>
   )
 }
