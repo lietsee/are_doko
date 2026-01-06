@@ -3,7 +3,11 @@ import { useStorageStore } from '../stores/storageStore'
 import { Sidebar } from '../components/Sidebar'
 import { RectSelector } from '../components/RectSelector'
 import { ObjectForm } from '../components/ObjectForm'
+import { WarehouseDialog } from '../components/WarehouseDialog'
+import { PhotoDialog } from '../components/PhotoDialog'
+import { ExportImportBar } from '../components/ExportImportBar'
 import { clipImage } from '../utils/imageUtils'
+import { exportData, importData, generateExportFileName } from '../utils/exportImport'
 import type { RectMask } from '../types/storage'
 
 interface SelectionState {
@@ -21,9 +25,16 @@ export function RegistrationView() {
     setCurrentPhoto,
     setViewMode,
     addObject,
+    addWarehouse,
+    addPhoto,
+    getAppData,
+    setInitialData,
   } = useStorageStore()
 
   const [selectionState, setSelectionState] = useState<SelectionState | null>(null)
+  const [isWarehouseDialogOpen, setIsWarehouseDialogOpen] = useState(false)
+  const [isPhotoDialogOpen, setIsPhotoDialogOpen] = useState(false)
+  const [photoDialogWarehouseId, setPhotoDialogWarehouseId] = useState<string | null>(null)
 
   // 現在の倉庫を取得
   const currentWarehouse = warehouses.find((w) => w.id === currentWarehouseId)
@@ -43,13 +54,51 @@ export function RegistrationView() {
   }
 
   const handleAddWarehouse = () => {
-    // TODO: 倉庫追加ダイアログを表示
-    console.log('Add warehouse')
+    setIsWarehouseDialogOpen(true)
+  }
+
+  const handleSaveWarehouse = (name: string, memo: string) => {
+    const id = addWarehouse(name, memo)
+    setCurrentWarehouse(id)
+    setIsWarehouseDialogOpen(false)
   }
 
   const handleAddPhoto = (warehouseId: string) => {
-    // TODO: 写真追加処理
-    console.log('Add photo to', warehouseId)
+    setPhotoDialogWarehouseId(warehouseId)
+    setIsPhotoDialogOpen(true)
+  }
+
+  const handleSavePhoto = (name: string, imageDataUrl: string, width: number, height: number) => {
+    if (photoDialogWarehouseId) {
+      const photoId = addPhoto(photoDialogWarehouseId, name, imageDataUrl, width, height)
+      setCurrentPhoto(photoId)
+      setIsPhotoDialogOpen(false)
+      setPhotoDialogWarehouseId(null)
+    }
+  }
+
+  // エクスポート
+  const handleExport = () => {
+    const appData = getAppData()
+    const json = exportData(appData)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = generateExportFileName()
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // インポート
+  const handleImport = (json: string) => {
+    const existingData = getAppData()
+    const result = importData(json, 'overwrite', existingData)
+    if (result.success && result.data) {
+      setInitialData(result.data)
+    } else {
+      alert(result.error || 'インポートに失敗しました')
+    }
   }
 
   const handleRectSelect = async (rect: { x: number; y: number; width: number; height: number }) => {
@@ -117,12 +166,15 @@ export function RegistrationView() {
           <div className="text-green-800 font-medium">
             登録モード: {currentWarehouse?.name || 'are-doko'}
           </div>
-          <button
-            onClick={handleSwitchToView}
-            className="px-4 py-2 text-sm font-medium text-white bg-gray-600 rounded hover:bg-gray-700"
-          >
-            閲覧モード
-          </button>
+          <div className="flex items-center gap-4">
+            <ExportImportBar onExport={handleExport} onImport={handleImport} />
+            <button
+              onClick={handleSwitchToView}
+              className="px-4 py-2 text-sm font-medium text-white bg-gray-600 rounded hover:bg-gray-700"
+            >
+              閲覧モード
+            </button>
+          </div>
         </div>
 
         {/* 選択エリアまたはフォーム */}
@@ -150,6 +202,23 @@ export function RegistrationView() {
           )}
         </div>
       </div>
+
+      {/* 倉庫追加ダイアログ */}
+      <WarehouseDialog
+        isOpen={isWarehouseDialogOpen}
+        onClose={() => setIsWarehouseDialogOpen(false)}
+        onSave={handleSaveWarehouse}
+      />
+
+      {/* 写真追加ダイアログ */}
+      <PhotoDialog
+        isOpen={isPhotoDialogOpen}
+        onClose={() => {
+          setIsPhotoDialogOpen(false)
+          setPhotoDialogWarehouseId(null)
+        }}
+        onSave={handleSavePhoto}
+      />
     </div>
   )
 }

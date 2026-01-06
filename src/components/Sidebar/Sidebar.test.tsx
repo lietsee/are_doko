@@ -191,4 +191,97 @@ describe('Sidebar', () => {
 
     expect(screen.getByText('倉庫がありません')).toBeInTheDocument()
   })
+
+  it('倉庫編集ボタンをクリックするとonEditWarehouseが呼ばれる', async () => {
+    const user = userEvent.setup()
+    const onEditWarehouse = vi.fn()
+    render(
+      <Sidebar
+        warehouses={mockWarehouses}
+        currentWarehouseId="w1"
+        currentPhotoId={null}
+        onSelectWarehouse={vi.fn()}
+        onSelectPhoto={vi.fn()}
+        onAddWarehouse={vi.fn()}
+        onAddPhoto={vi.fn()}
+        onEditWarehouse={onEditWarehouse}
+        onDeleteWarehouse={vi.fn()}
+      />
+    )
+
+    // 倉庫が展開されている状態で編集ボタンをクリック
+    const editButtons = screen.getAllByTitle('倉庫を編集')
+    await user.click(editButtons[0])
+
+    expect(onEditWarehouse).toHaveBeenCalledWith('w1')
+  })
+
+  it('倉庫削除ボタンをクリックするとonDeleteWarehouseが呼ばれる', async () => {
+    const user = userEvent.setup()
+    const onDeleteWarehouse = vi.fn()
+    render(
+      <Sidebar
+        warehouses={mockWarehouses}
+        currentWarehouseId="w1"
+        currentPhotoId={null}
+        onSelectWarehouse={vi.fn()}
+        onSelectPhoto={vi.fn()}
+        onAddWarehouse={vi.fn()}
+        onAddPhoto={vi.fn()}
+        onEditWarehouse={vi.fn()}
+        onDeleteWarehouse={onDeleteWarehouse}
+      />
+    )
+
+    const deleteButtons = screen.getAllByTitle('倉庫を削除')
+    await user.click(deleteButtons[0])
+
+    expect(onDeleteWarehouse).toHaveBeenCalledWith('w1')
+  })
+
+  it('写真編集ボタンをクリックするとonEditPhotoが呼ばれる', async () => {
+    const user = userEvent.setup()
+    const onEditPhoto = vi.fn()
+    render(
+      <Sidebar
+        warehouses={mockWarehouses}
+        currentWarehouseId="w1"
+        currentPhotoId={null}
+        onSelectWarehouse={vi.fn()}
+        onSelectPhoto={vi.fn()}
+        onAddWarehouse={vi.fn()}
+        onAddPhoto={vi.fn()}
+        onEditPhoto={onEditPhoto}
+        onDeletePhoto={vi.fn()}
+      />
+    )
+
+    const editButtons = screen.getAllByTitle('写真を編集')
+    await user.click(editButtons[0])
+
+    expect(onEditPhoto).toHaveBeenCalledWith('w1', 'p1')
+  })
+
+  it('写真削除ボタンをクリックするとonDeletePhotoが呼ばれる', async () => {
+    const user = userEvent.setup()
+    const onDeletePhoto = vi.fn()
+    render(
+      <Sidebar
+        warehouses={mockWarehouses}
+        currentWarehouseId="w1"
+        currentPhotoId={null}
+        onSelectWarehouse={vi.fn()}
+        onSelectPhoto={vi.fn()}
+        onAddWarehouse={vi.fn()}
+        onAddPhoto={vi.fn()}
+        onEditPhoto={vi.fn()}
+        onDeletePhoto={onDeletePhoto}
+      />
+    )
+
+    const deleteButtons = screen.getAllByTitle('写真を削除')
+    await user.click(deleteButtons[0])
+
+    expect(onDeletePhoto).toHaveBeenCalledWith('w1', 'p1')
+  })
 })

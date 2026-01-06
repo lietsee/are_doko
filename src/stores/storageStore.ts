@@ -20,6 +20,7 @@ interface StorageState {
 interface StorageActions {
   // Data initialization
   setInitialData: (data: AppData) => void
+  getAppData: () => AppData
 
   // Warehouse CRUD
   addWarehouse: (name: string, memo?: string) => string
@@ -81,6 +82,16 @@ export const useStorageStore = create<StorageState & StorageActions>((set, get) 
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
     })
+  },
+
+  getAppData: () => {
+    const state = get()
+    return {
+      version: state.version,
+      warehouses: state.warehouses,
+      createdAt: state.createdAt,
+      updatedAt: state.updatedAt,
+    }
   },
 
   // Warehouse CRUD
