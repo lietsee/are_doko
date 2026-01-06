@@ -1,17 +1,21 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useStorageStore } from '../stores/storageStore'
 import { Sidebar } from '../components/Sidebar'
 import { RectSelector } from '../components/RectSelector'
+import { SamSelector } from '../components/SamSelector'
 import { ObjectForm } from '../components/ObjectForm'
 import { WarehouseDialog } from '../components/WarehouseDialog'
 import { PhotoDialog } from '../components/PhotoDialog'
 import { ExportImportBar } from '../components/ExportImportBar'
 import { clipImage } from '../utils/imageUtils'
 import { exportData, importData, generateExportFileName } from '../utils/exportImport'
-import type { RectMask } from '../types/storage'
+import { segment, checkSamHealth, polygonToBoundingBox } from '../utils/samApi'
+import type { RectMask, PolygonMask } from '../types/storage'
+
+type InputMode = 'rect' | 'sam'
 
 interface SelectionState {
-  rect: RectMask
+  mask: RectMask | PolygonMask
   previewImageDataUrl: string
   clickPoint: { x: number; y: number }
 }
@@ -35,6 +39,17 @@ export function RegistrationView() {
   const [isWarehouseDialogOpen, setIsWarehouseDialogOpen] = useState(false)
   const [isPhotoDialogOpen, setIsPhotoDialogOpen] = useState(false)
   const [photoDialogWarehouseId, setPhotoDialogWarehouseId] = useState<string | null>(null)
+
+  // SAM関連の状態
+  const [inputMode, setInputMode] = useState<InputMode>('rect')
+  const [samAvailable, setSamAvailable] = useState(false)
+  const [samLoading, setSamLoading] = useState(false)
+  const [samError, setSamError] = useState<string | undefined>()
+
+  // SAMサーバーのヘルスチェック
+  useEffect(() => {
+    checkSamHealth().then(setSamAvailable)
+  }, [])
 
   // 現在の倉庫を取得
   const currentWarehouse = warehouses.find((w) => w.id === currentWarehouseId)
@@ -117,14 +132,52 @@ export function RegistrationView() {
         x: rect.x + rect.width / 2,
         y: rect.y + rect.height / 2,
       }
-      setSelectionState({ rect: mask, previewImageDataUrl, clickPoint })
+      setSelectionState({ mask, previewImageDataUrl, clickPoint })
     } catch (error) {
       console.error('Failed to clip image:', error)
     }
   }
 
+  // SAMでの選択処理
+  const handleSamSelect = async (clickX: number, clickY: number) => {
+    if (!currentPhoto) return
+
+    setSamLoading(true)
+    setSamError(undefined)
+
+    try {
+      const result = await segment(currentPhoto.imageDataUrl, clickX, clickY)
+
+      // ポリゴンマスクを作成
+      const mask: PolygonMask = {
+        type: 'polygon',
+        points: result.polygon,
+      }
+
+      // バウンディングボックスで画像を切り出し
+      const bbox = polygonToBoundingBox(result.polygon)
+      const rectMask: RectMask = {
+        type: 'rect',
+        x: bbox.x,
+        y: bbox.y,
+        width: bbox.width,
+        height: bbox.height,
+      }
+      const previewImageDataUrl = await clipImage(currentPhoto.imageDataUrl, rectMask)
+
+      const clickPoint = { x: clickX, y: clickY }
+      setSelectionState({ mask, previewImageDataUrl, clickPoint })
+    } catch (error) {
+      const errorObj = error as { error?: string; code?: string }
+      setSamError(errorObj.error || 'セグメンテーションに失敗しました')
+    } finally {
+      setSamLoading(false)
+    }
+  }
+
   const handleCancelSelection = () => {
     setSelectionState(null)
+    setSamError(undefined)
   }
 
   const handleSaveObject = (name: string, memo: string) => {
@@ -136,7 +189,7 @@ export function RegistrationView() {
       name,
       memo,
       selectionState.previewImageDataUrl,
-      selectionState.rect,
+      selectionState.mask,
       selectionState.clickPoint
     )
     setSelectionState(null)
@@ -163,8 +216,37 @@ export function RegistrationView() {
       <div className="flex-1 flex flex-col">
         {/* ツールバー */}
         <div className="flex items-center justify-between px-4 py-2 bg-green-100 border-b border-green-200">
-          <div className="text-green-800 font-medium">
-            登録モード: {currentWarehouse?.name || 'are-doko'}
+          <div className="flex items-center gap-4">
+            <span className="text-green-800 font-medium">
+              登録モード: {currentWarehouse?.name || 'are-doko'}
+            </span>
+            {/* 入力モード切り替え */}
+            <div className="flex items-center gap-1 bg-white rounded px-1 py-0.5">
+              <button
+                onClick={() => setInputMode('rect')}
+                className={`px-3 py-1 text-sm rounded ${
+                  inputMode === 'rect'
+                    ? 'bg-green-600 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                矩形選択
+              </button>
+              <button
+                onClick={() => setInputMode('sam')}
+                disabled={!samAvailable}
+                className={`px-3 py-1 text-sm rounded ${
+                  inputMode === 'sam'
+                    ? 'bg-green-600 text-white'
+                    : samAvailable
+                      ? 'text-gray-600 hover:bg-gray-100'
+                      : 'text-gray-400 cursor-not-allowed'
+                }`}
+                title={samAvailable ? 'AI検出' : 'SAMサーバーに接続できません'}
+              >
+                AI検出
+              </button>
+            </div>
           </div>
           <div className="flex items-center gap-4">
             <ExportImportBar onExport={handleExport} onImport={handleImport} />
@@ -191,6 +273,16 @@ export function RegistrationView() {
                 onCancel={handleCancelSelection}
               />
             </div>
+          ) : inputMode === 'sam' ? (
+            <SamSelector
+              imageDataUrl={currentPhoto.imageDataUrl}
+              imageWidth={currentPhoto.width}
+              imageHeight={currentPhoto.height}
+              onSelect={handleSamSelect}
+              onCancel={handleSwitchToView}
+              isLoading={samLoading}
+              error={samError}
+            />
           ) : (
             <RectSelector
               imageDataUrl={currentPhoto.imageDataUrl}
