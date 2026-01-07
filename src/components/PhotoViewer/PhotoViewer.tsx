@@ -1,3 +1,4 @@
+import { useRef, useState, useEffect } from 'react'
 import type { Photo, StorageObject } from '../../types/storage'
 
 interface PhotoViewerProps {
@@ -19,6 +20,37 @@ export function PhotoViewer({
   hasPrev,
   hasNext,
 }: PhotoViewerProps) {
+  const imgRef = useRef<HTMLImageElement>(null)
+  const [scale, setScale] = useState(1)
+
+  // 画像ロード・リサイズ時にスケール計算
+  useEffect(() => {
+    const updateScale = () => {
+      if (imgRef.current && photo.width > 0) {
+        const displayWidth = imgRef.current.clientWidth
+        setScale(displayWidth / photo.width)
+      }
+    }
+
+    // 画像ロード完了時
+    const img = imgRef.current
+    if (img) {
+      if (img.complete) {
+        updateScale()
+      } else {
+        img.addEventListener('load', updateScale)
+      }
+    }
+
+    // リサイズ時
+    window.addEventListener('resize', updateScale)
+
+    return () => {
+      window.removeEventListener('resize', updateScale)
+      img?.removeEventListener('load', updateScale)
+    }
+  }, [photo])
+
   return (
     <div className="flex flex-col h-full bg-gray-900">
       {/* ヘッダー */}
@@ -49,6 +81,7 @@ export function PhotoViewer({
         <div className="relative inline-block">
           {/* 写真 */}
           <img
+            ref={imgRef}
             src={photo.imageDataUrl}
             alt={photo.name}
             className="max-w-full max-h-full object-contain"
@@ -61,6 +94,7 @@ export function PhotoViewer({
               object={obj}
               isSelected={selectedObjectId === obj.id}
               onClick={() => onObjectClick(obj)}
+              scale={scale}
             />
           ))}
         </div>
@@ -73,9 +107,10 @@ interface ObjectOverlayProps {
   object: StorageObject
   isSelected: boolean
   onClick: () => void
+  scale: number
 }
 
-function ObjectOverlay({ object, isSelected, onClick }: ObjectOverlayProps) {
+function ObjectOverlay({ object, isSelected, onClick, scale }: ObjectOverlayProps) {
   const { mask } = object
 
   if (mask.type === 'rect') {
@@ -87,10 +122,10 @@ function ObjectOverlay({ object, isSelected, onClick }: ObjectOverlayProps) {
           isSelected ? 'ring-4 ring-yellow-400' : ''
         }`}
         style={{
-          left: mask.x,
-          top: mask.y,
-          width: mask.width,
-          height: mask.height,
+          left: mask.x * scale,
+          top: mask.y * scale,
+          width: mask.width * scale,
+          height: mask.height * scale,
         }}
         aria-label={object.name}
       />
@@ -99,11 +134,12 @@ function ObjectOverlay({ object, isSelected, onClick }: ObjectOverlayProps) {
 
   // ポリゴンの場合（SVGで描画）
   if (mask.type === 'polygon') {
-    const points = mask.points.map((p) => `${p.x},${p.y}`).join(' ')
-    const minX = Math.min(...mask.points.map((p) => p.x))
-    const minY = Math.min(...mask.points.map((p) => p.y))
-    const maxX = Math.max(...mask.points.map((p) => p.x))
-    const maxY = Math.max(...mask.points.map((p) => p.y))
+    // スケール適用したポリゴン座標
+    const scaledPoints = mask.points.map((p) => `${p.x * scale},${p.y * scale}`).join(' ')
+    const minX = Math.min(...mask.points.map((p) => p.x)) * scale
+    const minY = Math.min(...mask.points.map((p) => p.y)) * scale
+    const maxX = Math.max(...mask.points.map((p) => p.x)) * scale
+    const maxY = Math.max(...mask.points.map((p) => p.y)) * scale
 
     return (
       <button
@@ -123,7 +159,7 @@ function ObjectOverlay({ object, isSelected, onClick }: ObjectOverlayProps) {
           viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
         >
           <polygon
-            points={points}
+            points={scaledPoints}
             className="fill-blue-500/30 stroke-blue-500 stroke-2 hover:fill-blue-500/50 transition-colors"
           />
         </svg>
