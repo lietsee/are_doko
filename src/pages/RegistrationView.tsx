@@ -3,16 +3,18 @@ import { useStorageStore } from '../stores/storageStore'
 import { Sidebar } from '../components/Sidebar'
 import { RectSelector } from '../components/RectSelector'
 import { SamSelector } from '../components/SamSelector'
+import { LassoSelector } from '../components/LassoSelector'
 import { ObjectForm } from '../components/ObjectForm'
 import { WarehouseDialog } from '../components/WarehouseDialog'
 import { PhotoDialog } from '../components/PhotoDialog'
 import { ExportImportBar } from '../components/ExportImportBar'
 import { clipImage, clipImageWithPolygon } from '../utils/imageUtils'
 import { exportData, importData, generateExportFileName } from '../utils/exportImport'
-import { segment, checkSamHealth, polygonToBoundingBox } from '../utils/samApi'
+import { segment, segmentWithLasso, checkSamHealth, polygonToBoundingBox } from '../utils/samApi'
 import type { RectMask, PolygonMask } from '../types/storage'
+import type { Position } from '../utils/samApi'
 
-type InputMode = 'rect' | 'sam'
+type InputMode = 'rect' | 'sam' | 'lasso'
 
 interface SelectionState {
   mask: RectMask | PolygonMask
@@ -172,6 +174,43 @@ export function RegistrationView() {
     }
   }
 
+  // 投げ縄での選択処理
+  const handleLassoSelect = async (lassoPolygon: Position[]) => {
+    if (!currentPhoto) return
+
+    setSamLoading(true)
+    setSamError(undefined)
+
+    try {
+      const result = await segmentWithLasso(currentPhoto.imageDataUrl, lassoPolygon)
+
+      // ポリゴンマスクを作成
+      const mask: PolygonMask = {
+        type: 'polygon',
+        points: result.polygon,
+      }
+
+      // ポリゴン形状で画像を切り出し（ポリゴン外は透明）
+      const bbox = polygonToBoundingBox(result.polygon)
+      const previewImageDataUrl = await clipImageWithPolygon(
+        currentPhoto.imageDataUrl,
+        result.polygon,
+        bbox
+      )
+
+      // クリックポイントは投げ縄の中心
+      const centerX = lassoPolygon.reduce((sum, p) => sum + p.x, 0) / lassoPolygon.length
+      const centerY = lassoPolygon.reduce((sum, p) => sum + p.y, 0) / lassoPolygon.length
+      const clickPoint = { x: centerX, y: centerY }
+      setSelectionState({ mask, previewImageDataUrl, clickPoint })
+    } catch (error) {
+      const errorObj = error as { error?: string; code?: string }
+      setSamError(errorObj.error || 'セグメンテーションに失敗しました')
+    } finally {
+      setSamLoading(false)
+    }
+  }
+
   const handleCancelSelection = () => {
     setSelectionState(null)
     setSamError(undefined)
@@ -243,6 +282,20 @@ export function RegistrationView() {
               >
                 AI検出
               </button>
+              <button
+                onClick={() => setInputMode('lasso')}
+                disabled={!samAvailable}
+                className={`px-3 py-1 text-sm rounded ${
+                  inputMode === 'lasso'
+                    ? 'bg-green-600 text-white'
+                    : samAvailable
+                      ? 'text-gray-600 hover:bg-gray-100'
+                      : 'text-gray-400 cursor-not-allowed'
+                }`}
+                title={samAvailable ? '投げ縄' : 'SAMサーバーに接続できません'}
+              >
+                投げ縄
+              </button>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -276,6 +329,16 @@ export function RegistrationView() {
               imageWidth={currentPhoto.width}
               imageHeight={currentPhoto.height}
               onSelect={handleSamSelect}
+              onCancel={handleSwitchToView}
+              isLoading={samLoading}
+              error={samError}
+            />
+          ) : inputMode === 'lasso' ? (
+            <LassoSelector
+              imageDataUrl={currentPhoto.imageDataUrl}
+              imageWidth={currentPhoto.width}
+              imageHeight={currentPhoto.height}
+              onSelect={handleLassoSelect}
               onCancel={handleSwitchToView}
               isLoading={samLoading}
               error={samError}

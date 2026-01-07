@@ -49,6 +49,12 @@ class SegmentRequest(BaseModel):
     click_y: int  # クリックY座標（元画像ピクセル座標）
 
 
+class LassoSegmentRequest(BaseModel):
+    """投げ縄セグメンテーションリクエスト"""
+    image_base64: str  # Base64エンコードされた画像（data:prefix除く）
+    lasso_polygon: list[dict]  # 投げ縄ポリゴン [{"x": 100, "y": 100}, ...]
+
+
 class Position(BaseModel):
     """座標"""
     x: float
@@ -172,6 +178,95 @@ async def segment(request: SegmentRequest):
         raise
     except Exception as e:
         print(f"Segmentation error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "サーバーエラーが発生しました", "code": "SERVER_ERROR"},
+        )
+
+
+@app.post("/api/segment-lasso", response_model=SegmentResponse)
+async def segment_lasso(request: LassoSegmentRequest):
+    """
+    投げ縄ポリゴン内のオブジェクト領域を検出
+
+    - image_base64: Base64エンコードされた画像（data:prefix除く）
+    - lasso_polygon: 投げ縄ポリゴン [{"x": 100, "y": 100}, ...]
+    """
+    try:
+        # Base64デコード
+        try:
+            image_data = request.image_base64
+            if "," in image_data:
+                image_data = image_data.split(",")[1]
+
+            image_bytes = base64.b64decode(image_data)
+            image = Image.open(io.BytesIO(image_bytes))
+
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "画像のデコードに失敗しました", "code": "INVALID_FORMAT"},
+            )
+
+        # 画像サイズチェック
+        width, height = image.size
+        if width > 4096 or height > 4096:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "画像サイズが大きすぎます（最大4096x4096）", "code": "IMAGE_TOO_LARGE"},
+            )
+
+        # ポリゴンの検証
+        if len(request.lasso_polygon) < 3:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "投げ縄には3点以上必要です", "code": "INVALID_POLYGON"},
+            )
+
+        # ポリゴンをタプルリストに変換
+        lasso_polygon = [(int(p["x"]), int(p["y"])) for p in request.lasso_polygon]
+
+        # ポリゴン座標の検証
+        for x, y in lasso_polygon:
+            if x < 0 or x >= width or y < 0 or y >= height:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": "投げ縄座標が画像範囲外です", "code": "INVALID_COORDINATES"},
+                )
+
+        # SAMでセグメンテーション
+        service = get_sam_service()
+        result = service.segment_with_lasso(
+            image=np.array(image),
+            lasso_polygon=lasso_polygon,
+        )
+
+        if result is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "オブジェクトが検出できませんでした",
+                    "code": "NO_OBJECT_FOUND",
+                },
+            )
+
+        return SegmentResponse(
+            polygon=[Position(x=p[0], y=p[1]) for p in result["polygon"]],
+            bounding_box=BoundingBox(
+                x=result["bounding_box"][0],
+                y=result["bounding_box"][1],
+                width=result["bounding_box"][2],
+                height=result["bounding_box"][3],
+            ),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Lasso segmentation error: {e}")
         raise HTTPException(
             status_code=500,
             detail={"error": "サーバーエラーが発生しました", "code": "SERVER_ERROR"},

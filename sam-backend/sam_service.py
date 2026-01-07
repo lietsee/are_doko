@@ -150,6 +150,97 @@ class SAMService:
         # マスクからポリゴンとバウンディングボックスを抽出
         return self._mask_to_result(mask)
 
+    def segment_with_lasso(
+        self,
+        image: np.ndarray,
+        lasso_polygon: list[tuple[int, int]],
+    ) -> Optional[dict]:
+        """
+        投げ縄ポリゴン内のオブジェクトを検出
+
+        Args:
+            image: RGB画像（H, W, 3）
+            lasso_polygon: 投げ縄で描いたポリゴン [(x1, y1), (x2, y2), ...]
+
+        Returns:
+            {
+                "polygon": [(x1, y1), (x2, y2), ...],
+                "bounding_box": (x, y, width, height),
+            }
+            または None（検出失敗時）
+        """
+        import cv2
+
+        if len(lasso_polygon) < 3:
+            return None
+
+        h, w = image.shape[:2]
+
+        # 投げ縄のバウンディングボックスを計算
+        xs = [p[0] for p in lasso_polygon]
+        ys = [p[1] for p in lasso_polygon]
+        box_x1 = max(0, min(xs))
+        box_y1 = max(0, min(ys))
+        box_x2 = min(w, max(xs))
+        box_y2 = min(h, max(ys))
+
+        # 投げ縄の中心点を計算
+        center_x = (box_x1 + box_x2) // 2
+        center_y = (box_y1 + box_y2) // 2
+
+        if not SAM_AVAILABLE or self.predictor is None:
+            # ダミーモード: 投げ縄そのものを返す
+            return {
+                "polygon": lasso_polygon,
+                "bounding_box": (box_x1, box_y1, box_x2 - box_x1, box_y2 - box_y1),
+            }
+
+        # 画像をセット（同じ画像なら再利用）
+        if self._current_image is None or not np.array_equal(self._current_image, image):
+            self.predictor.set_image(image)
+            self._current_image = image.copy()
+
+        # ボックス + 中心点でセグメンテーション
+        box = np.array([box_x1, box_y1, box_x2, box_y2])
+        center_point = np.array([[center_x, center_y]])
+
+        masks, scores, _ = self.predictor.predict(
+            point_coords=center_point,
+            point_labels=np.array([1]),
+            box=box[None, :],
+            multimask_output=True,  # 3つのマスクを取得
+        )
+
+        # 投げ縄マスクを作成
+        lasso_mask = np.zeros((h, w), dtype=np.uint8)
+        lasso_points = np.array(lasso_polygon, dtype=np.int32)
+        cv2.fillPoly(lasso_mask, [lasso_points], 1)
+        lasso_bool = lasso_mask.astype(bool)
+        lasso_area = lasso_bool.sum()
+
+        # 投げ縄との重なり率が最大のマスクを選択
+        best_idx = 0
+        best_coverage = 0
+        for i, mask in enumerate(masks):
+            overlap = (mask & lasso_bool).sum()
+            coverage = overlap / lasso_area if lasso_area > 0 else 0
+            if coverage > best_coverage:
+                best_coverage = coverage
+                best_idx = i
+
+        sam_mask = masks[best_idx]
+
+        # マスクが空の場合
+        if not sam_mask.any():
+            # フォールバック: 投げ縄そのものを返す
+            return {
+                "polygon": lasso_polygon,
+                "bounding_box": (box_x1, box_y1, box_x2 - box_x1, box_y2 - box_y1),
+            }
+
+        # SAMマスクをそのまま使用（投げ縄は「ヒント」として扱う）
+        return self._mask_to_result(sam_mask)
+
     def _dummy_segment(
         self,
         image: np.ndarray,
