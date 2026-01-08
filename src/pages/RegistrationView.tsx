@@ -4,6 +4,7 @@ import { Sidebar } from '../components/Sidebar'
 import { RectSelector } from '../components/RectSelector'
 import { SamSelector } from '../components/SamSelector'
 import { LassoSelector } from '../components/LassoSelector'
+import { PolygonSelector } from '../components/PolygonSelector'
 import { ObjectForm } from '../components/ObjectForm'
 import { WarehouseDialog } from '../components/WarehouseDialog'
 import { PhotoDialog } from '../components/PhotoDialog'
@@ -14,7 +15,7 @@ import { segment, segmentWithLasso, checkSamHealth, polygonToBoundingBox } from 
 import type { RectMask, PolygonMask } from '../types/storage'
 import type { Position } from '../utils/samApi'
 
-type InputMode = 'rect' | 'sam' | 'lasso'
+type InputMode = 'rect' | 'sam' | 'lasso' | 'polygon'
 
 interface SelectionState {
   mask: RectMask | PolygonMask
@@ -211,6 +212,35 @@ export function RegistrationView() {
     }
   }
 
+  // ポリゴン選択処理（SAMなし）
+  const handlePolygonSelect = async (polygon: Position[]) => {
+    if (!currentPhoto) return
+
+    try {
+      // ポリゴンマスクを作成
+      const mask: PolygonMask = {
+        type: 'polygon',
+        points: polygon,
+      }
+
+      // ポリゴン形状で画像を切り出し
+      const bbox = polygonToBoundingBox(polygon)
+      const previewImageDataUrl = await clipImageWithPolygon(
+        currentPhoto.imageDataUrl,
+        polygon,
+        bbox
+      )
+
+      // クリックポイントはポリゴンの中心
+      const centerX = polygon.reduce((sum, p) => sum + p.x, 0) / polygon.length
+      const centerY = polygon.reduce((sum, p) => sum + p.y, 0) / polygon.length
+      const clickPoint = { x: centerX, y: centerY }
+      setSelectionState({ mask, previewImageDataUrl, clickPoint })
+    } catch (error) {
+      console.error('Polygon selection error:', error)
+    }
+  }
+
   const handleCancelSelection = () => {
     setSelectionState(null)
     setSamError(undefined)
@@ -296,6 +326,17 @@ export function RegistrationView() {
               >
                 AI投げ縄
               </button>
+              <button
+                onClick={() => setInputMode('polygon')}
+                className={`px-3 py-1 text-sm rounded ${
+                  inputMode === 'polygon'
+                    ? 'bg-green-600 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+                title="ポリゴン選択"
+              >
+                ポリゴン
+              </button>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -342,6 +383,14 @@ export function RegistrationView() {
               onCancel={handleSwitchToView}
               isLoading={samLoading}
               error={samError}
+            />
+          ) : inputMode === 'polygon' ? (
+            <PolygonSelector
+              imageDataUrl={currentPhoto.imageDataUrl}
+              imageWidth={currentPhoto.width}
+              imageHeight={currentPhoto.height}
+              onSelect={handlePolygonSelect}
+              onCancel={handleSwitchToView}
             />
           ) : (
             <RectSelector
