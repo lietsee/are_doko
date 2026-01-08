@@ -200,7 +200,18 @@ class SAMService:
             self.predictor.set_image(image)
             self._current_image = image.copy()
 
-        # ボックス + 中心点でセグメンテーション
+        # 投げ縄マスクを作成
+        lasso_mask = np.zeros((h, w), dtype=np.uint8)
+        lasso_points = np.array(lasso_polygon, dtype=np.int32)
+        cv2.fillPoly(lasso_mask, [lasso_points], 1)
+
+        # mask_input用にリサイズ (256x256) - SAMの低解像度マスク形式
+        lasso_mask_resized = cv2.resize(lasso_mask, (256, 256), interpolation=cv2.INTER_NEAREST)
+        # logits形式に変換 (内部: 正の値、外部: 負の値)
+        mask_logits = (lasso_mask_resized.astype(np.float32) * 2 - 1) * 10
+        mask_input = mask_logits[None, :, :]  # (1, 256, 256)
+
+        # ボックス + 中心点 + マスクヒントでセグメンテーション
         box = np.array([box_x1, box_y1, box_x2, box_y2])
         center_point = np.array([[center_x, center_y]])
 
@@ -208,13 +219,10 @@ class SAMService:
             point_coords=center_point,
             point_labels=np.array([1]),
             box=box[None, :],
+            mask_input=mask_input,  # 投げ縄形状をヒントとして渡す
             multimask_output=True,  # 3つのマスクを取得
         )
 
-        # 投げ縄マスクを作成
-        lasso_mask = np.zeros((h, w), dtype=np.uint8)
-        lasso_points = np.array(lasso_polygon, dtype=np.int32)
-        cv2.fillPoly(lasso_mask, [lasso_points], 1)
         lasso_bool = lasso_mask.astype(bool)
         lasso_area = lasso_bool.sum()
 

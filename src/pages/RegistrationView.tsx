@@ -292,9 +292,9 @@ export function RegistrationView() {
                       ? 'text-gray-600 hover:bg-gray-100'
                       : 'text-gray-400 cursor-not-allowed'
                 }`}
-                title={samAvailable ? '投げ縄' : 'SAMサーバーに接続できません'}
+                title={samAvailable ? 'AI投げ縄' : 'SAMサーバーに接続できません'}
               >
-                投げ縄
+                AI投げ縄
               </button>
             </div>
           </div>
