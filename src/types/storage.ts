@@ -52,6 +52,7 @@ export interface StorageObject {
   clickPoint: Position
   createdAt: string
   updatedAt: string
+  version: number
 }
 
 /**
@@ -66,6 +67,7 @@ export interface Photo {
   objects: StorageObject[]
   createdAt: string
   updatedAt: string
+  version: number
 }
 
 /**
@@ -78,6 +80,7 @@ export interface Warehouse {
   photos: Photo[]
   createdAt: string
   updatedAt: string
+  version: number
 }
 
 /**
@@ -98,4 +101,4 @@ export type ViewMode = 'view' | 'registration'
 /**
  * 入力方式
  */
-export type InputMode = 'sam' | 'rect'
+export type InputMode = 'sam' | 'rect' | 'polygon'

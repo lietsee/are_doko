@@ -9,6 +9,8 @@ export async function clipImage(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image()
+    // CORS対応: 異なるオリジン(Supabase Storage)からの画像をCanvasで操作可能にする
+    img.crossOrigin = 'anonymous'
     img.onload = () => {
       const canvas = document.createElement('canvas')
       canvas.width = rect.width
@@ -54,6 +56,8 @@ export async function clipImageWithPolygon(
     }
 
     const img = new Image()
+    // CORS対応: 異なるオリジン(Supabase Storage)からの画像をCanvasで操作可能にする
+    img.crossOrigin = 'anonymous'
     img.onload = () => {
       const canvas = document.createElement('canvas')
       canvas.width = boundingBox.width

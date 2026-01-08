@@ -27,6 +27,7 @@ export function createWarehouse(name: string, memo = ''): Warehouse {
     photos: [],
     createdAt: now,
     updatedAt: now,
+    version: 1,
   }
 }
 
@@ -49,6 +50,7 @@ export function createPhoto(
     objects: [],
     createdAt: now,
     updatedAt: now,
+    version: 1,
   }
 }
 
@@ -72,5 +74,6 @@ export function createStorageObject(
     clickPoint,
     createdAt: now,
     updatedAt: now,
+    version: 1,
   }
 }

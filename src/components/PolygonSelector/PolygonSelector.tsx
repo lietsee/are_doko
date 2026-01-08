@@ -4,6 +4,8 @@
 
 import { useRef, useState, useEffect, useCallback } from 'react'
 import type { Position } from '../../utils/samApi'
+import { useImageZoom } from '../../hooks/useImageZoom'
+import { ZoomControls } from '../ZoomControls'
 
 interface PolygonSelectorProps {
   imageDataUrl: string
@@ -24,61 +26,74 @@ export function PolygonSelector({
 }: PolygonSelectorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  // 頂点は画像座標で保存
   const [vertices, setVertices] = useState<Position[]>([])
-  const [displaySize, setDisplaySize] = useState({ width: 0, height: 0 })
   const [mousePos, setMousePos] = useState<Position | null>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
+  const [imageLoaded, setImageLoaded] = useState(false)
 
-  // 画像のロードと表示サイズ計算
+  const { scale, displayScale, isReady, zoomIn, zoomOut, resetZoom, handleWheel } = useImageZoom({
+    imageWidth,
+    imageHeight,
+    containerRef,
+  })
+
+  // マウスホイールでズーム
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => container.removeEventListener('wheel', handleWheel)
+  }, [handleWheel])
+
+  // 画像のロード
   useEffect(() => {
     const img = new Image()
+    img.crossOrigin = 'anonymous'
     img.onload = () => {
       imageRef.current = img
-      const container = containerRef.current
-      if (!container) return
-
-      const containerWidth = container.clientWidth
-      const containerHeight = container.clientHeight
-      const imgAspect = imageWidth / imageHeight
-      const containerAspect = containerWidth / containerHeight
-
-      let displayWidth: number
-      let displayHeight: number
-
-      if (imgAspect > containerAspect) {
-        displayWidth = containerWidth
-        displayHeight = containerWidth / imgAspect
-      } else {
-        displayHeight = containerHeight
-        displayWidth = containerHeight * imgAspect
-      }
-
-      setDisplaySize({ width: displayWidth, height: displayHeight })
+      setImageLoaded(true)
     }
     img.src = imageDataUrl
-  }, [imageDataUrl, imageWidth, imageHeight])
+  }, [imageDataUrl])
+
+  // fitScaleを計算（displayScale / scale）- Canvas描画用
+  const fitScale = displayScale / scale
+
+  // Canvas表示サイズ（fitScaleベース - 画面フィット時のサイズ）
+  const canvasWidth = imageWidth * fitScale
+  const canvasHeight = imageHeight * fitScale
 
   // Canvasの描画
   useEffect(() => {
     const canvas = canvasRef.current
     const img = imageRef.current
-    if (!canvas || !img || displaySize.width === 0) return
+    if (!canvas || !img || !imageLoaded || canvasWidth === 0) return
 
-    canvas.width = displaySize.width
-    canvas.height = displaySize.height
+    canvas.width = canvasWidth
+    canvas.height = canvasHeight
 
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
     // 画像を描画
-    ctx.drawImage(img, 0, 0, displaySize.width, displaySize.height)
+    ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight)
+
+    // 画像座標を表示座標に変換（fitScale基準）
+    const toDisplay = (pos: Position): Position => ({
+      x: pos.x * fitScale,
+      y: pos.y * fitScale,
+    })
 
     // ポリゴンの辺を描画
     if (vertices.length > 1) {
       ctx.beginPath()
-      ctx.moveTo(vertices[0].x, vertices[0].y)
+      const first = toDisplay(vertices[0])
+      ctx.moveTo(first.x, first.y)
       for (let i = 1; i < vertices.length; i++) {
-        ctx.lineTo(vertices[i].x, vertices[i].y)
+        const v = toDisplay(vertices[i])
+        ctx.lineTo(v.x, v.y)
       }
       ctx.strokeStyle = '#22c55e'
       ctx.lineWidth = 2
@@ -87,9 +102,11 @@ export function PolygonSelector({
 
     // マウス位置への仮線を描画
     if (vertices.length > 0 && mousePos) {
+      const lastVertex = toDisplay(vertices[vertices.length - 1])
+      const mousePosDisplay = toDisplay(mousePos)
       ctx.beginPath()
-      ctx.moveTo(vertices[vertices.length - 1].x, vertices[vertices.length - 1].y)
-      ctx.lineTo(mousePos.x, mousePos.y)
+      ctx.moveTo(lastVertex.x, lastVertex.y)
+      ctx.lineTo(mousePosDisplay.x, mousePosDisplay.y)
       ctx.strokeStyle = '#22c55e'
       ctx.lineWidth = 1
       ctx.setLineDash([5, 5])
@@ -99,10 +116,10 @@ export function PolygonSelector({
 
     // 頂点を描画
     vertices.forEach((v, i) => {
+      const displayV = toDisplay(v)
       ctx.beginPath()
-      ctx.arc(v.x, v.y, VERTEX_RADIUS, 0, Math.PI * 2)
+      ctx.arc(displayV.x, displayV.y, VERTEX_RADIUS, 0, Math.PI * 2)
       if (i === 0) {
-        // 最初の頂点は特別な色
         ctx.fillStyle = '#f59e0b'
         ctx.strokeStyle = '#d97706'
       } else {
@@ -113,49 +130,42 @@ export function PolygonSelector({
       ctx.lineWidth = 2
       ctx.stroke()
     })
-  }, [vertices, displaySize, mousePos])
+  }, [vertices, canvasWidth, canvasHeight, mousePos, fitScale, imageLoaded])
 
-  // 表示座標を元画像座標に変換
-  const toImageCoords = useCallback(
-    (displayX: number, displayY: number): Position => {
-      const scaleX = imageWidth / displaySize.width
-      const scaleY = imageHeight / displaySize.height
+  // クリック位置から画像座標を取得
+  const getImageCoords = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>): Position => {
+      const canvas = canvasRef.current
+      if (!canvas) return { x: 0, y: 0 }
+
+      const rect = canvas.getBoundingClientRect()
+      const displayX = e.clientX - rect.left
+      const displayY = e.clientY - rect.top
       return {
-        x: displayX * scaleX,
-        y: displayY * scaleY,
+        x: displayX / displayScale,
+        y: displayY / displayScale,
       }
     },
-    [imageWidth, imageHeight, displaySize]
+    [displayScale]
   )
 
-  // クリック位置の取得
-  const getClickPosition = (e: React.MouseEvent<HTMLCanvasElement>): Position => {
-    const canvas = canvasRef.current
-    if (!canvas) return { x: 0, y: 0 }
-
-    const rect = canvas.getBoundingClientRect()
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    }
-  }
-
-  // 頂点との距離を計算
-  const distanceToVertex = (pos: Position, vertex: Position): number => {
-    return Math.sqrt((pos.x - vertex.x) ** 2 + (pos.y - vertex.y) ** 2)
+  // 頂点との距離を計算（表示座標で - transform後のスケールで計算）
+  const distanceToVertex = (imagePos: Position, vertex: Position): number => {
+    const dx = (imagePos.x - vertex.x) * displayScale
+    const dy = (imagePos.y - vertex.y) * displayScale
+    return Math.sqrt(dx ** 2 + dy ** 2)
   }
 
   // クリック処理
   const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const pos = getClickPosition(e)
+    const pos = getImageCoords(e)
 
     // 既存の頂点をクリックしたかチェック
     for (let i = 0; i < vertices.length; i++) {
       if (distanceToVertex(pos, vertices[i]) < VERTEX_RADIUS * 1.5) {
         if (i === 0 && vertices.length >= 3) {
           // 最初の頂点をクリック → ポリゴン確定
-          const imagePolygon = vertices.map((v) => toImageCoords(v.x, v.y))
-          onSelect(imagePolygon)
+          onSelect(vertices)
           return
         } else {
           // その他の頂点をクリック → 削除
@@ -165,13 +175,13 @@ export function PolygonSelector({
       }
     }
 
-    // 新しい頂点を追加
+    // 新しい頂点を追加（画像座標で保存）
     setVertices((prev) => [...prev, pos])
   }
 
   // マウス移動処理
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const pos = getClickPosition(e)
+    const pos = getImageCoords(e)
     setMousePos(pos)
   }
 
@@ -180,54 +190,64 @@ export function PolygonSelector({
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="relative w-full h-full flex items-center justify-center bg-gray-900"
-    >
-      {/* Canvas */}
-      <canvas
-        ref={canvasRef}
-        className="cursor-crosshair"
-        onClick={handleClick}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
-      />
-
-      {/* 説明テキスト */}
-      <div className="absolute top-2 left-2 bg-black/70 text-white px-3 py-1 rounded text-sm">
-        クリックで頂点追加 / 最初の頂点(オレンジ)で確定 / 頂点クリックで削除
-      </div>
-
-      {/* 頂点数表示 */}
-      {vertices.length > 0 && (
-        <div className="absolute top-2 right-2 bg-black/70 text-white px-3 py-1 rounded text-sm">
-          頂点: {vertices.length}
+    <div className="flex flex-col h-full bg-gray-900">
+      {/* ヘッダー */}
+      <div className="flex items-center justify-between px-4 py-2 bg-gray-800">
+        <div className="text-white text-sm">
+          クリックで頂点追加 / 最初の頂点(オレンジ)で確定 / 頂点クリックで削除
         </div>
-      )}
-
-      {/* キャンセルボタン */}
-      <div className="absolute bottom-2 left-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded"
-        >
-          キャンセル
-        </button>
-      </div>
-
-      {/* リセットボタン */}
-      {vertices.length > 0 && (
-        <div className="absolute bottom-2 right-2">
+        <div className="flex gap-2">
+          {vertices.length > 0 && (
+            <span className="text-white text-sm px-2 py-1">
+              頂点: {vertices.length}
+            </span>
+          )}
+          {vertices.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setVertices([])}
+              className="px-3 py-1 text-white bg-red-600 rounded hover:bg-red-700"
+            >
+              クリア
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setVertices([])}
-            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded"
+            onClick={onCancel}
+            className="px-4 py-1 text-white bg-gray-700 rounded hover:bg-gray-600"
           >
-            リセット
+            キャンセル
           </button>
         </div>
-      )}
+      </div>
+
+      {/* Canvas エリア */}
+      <div
+        ref={containerRef}
+        className="flex-1 relative overflow-hidden flex items-center justify-center"
+      >
+        {isReady && (
+          <canvas
+            ref={canvasRef}
+            className="cursor-crosshair"
+            style={{
+              transform: `scale(${scale})`,
+              transformOrigin: 'center',
+            }}
+            onClick={handleClick}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={handleMouseLeave}
+          />
+        )}
+      </div>
+
+      {/* ズームコントロール */}
+      <ZoomControls
+        scale={scale}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onReset={resetZoom}
+      />
     </div>
   )
 }

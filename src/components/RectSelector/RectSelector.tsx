@@ -1,4 +1,6 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { useImageZoom } from '../../hooks/useImageZoom'
+import { ZoomControls } from '../ZoomControls'
 
 interface Rect {
   x: number
@@ -26,19 +28,36 @@ export function RectSelector({
   const [startPoint, setStartPoint] = useState<{ x: number; y: number } | null>(null)
   const [currentRect, setCurrentRect] = useState<Rect | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const imageContainerRef = useRef<HTMLDivElement>(null)
+
+  const { scale, displayScale, isReady, zoomIn, zoomOut, resetZoom, handleWheel } = useImageZoom({
+    imageWidth,
+    imageHeight,
+    containerRef,
+  })
+
+  // fitScaleを計算（transform内の要素はfitScaleで位置計算）
+  const fitScale = displayScale / scale
+
+  // マウスホイールでズーム
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => container.removeEventListener('wheel', handleWheel)
+  }, [handleWheel])
 
   const getRelativePosition = useCallback(
     (clientX: number, clientY: number) => {
-      if (!containerRef.current) return { x: 0, y: 0 }
-      const rect = containerRef.current.getBoundingClientRect()
-      const scaleX = imageWidth / rect.width
-      const scaleY = imageHeight / rect.height
+      if (!imageContainerRef.current) return { x: 0, y: 0 }
+      const rect = imageContainerRef.current.getBoundingClientRect()
       return {
-        x: Math.max(0, Math.min(imageWidth, (clientX - rect.left) * scaleX)),
-        y: Math.max(0, Math.min(imageHeight, (clientY - rect.top) * scaleY)),
+        x: Math.max(0, Math.min(imageWidth, (clientX - rect.left) / displayScale)),
+        y: Math.max(0, Math.min(imageHeight, (clientY - rect.top) / displayScale)),
       }
     },
-    [imageWidth, imageHeight]
+    [imageWidth, imageHeight, displayScale]
   )
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -69,15 +88,6 @@ export function RectSelector({
     setCurrentRect(null)
   }
 
-  // 画面表示用のスケール計算
-  const displayScale = containerRef.current
-    ? Math.min(
-        containerRef.current.clientWidth / imageWidth,
-        containerRef.current.clientHeight / imageHeight,
-        1
-      )
-    : 1
-
   return (
     <div className="flex flex-col h-full bg-gray-900">
       {/* ヘッダー */}
@@ -94,43 +104,62 @@ export function RectSelector({
       </div>
 
       {/* 選択エリア */}
-      <div className="flex-1 relative overflow-hidden flex items-center justify-center p-4">
-        <div
-          ref={containerRef}
-          data-testid="rect-selector-canvas"
-          className="relative cursor-crosshair select-none"
-          style={{
-            width: imageWidth * displayScale,
-            height: imageHeight * displayScale,
-          }}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-        >
-          {/* 画像 */}
-          <img
-            src={imageDataUrl}
-            alt="選択対象"
-            className="w-full h-full object-contain pointer-events-none"
-            draggable={false}
-          />
-
-          {/* 選択中の矩形 */}
-          {currentRect && (
-            <div
-              data-testid="selection-rect"
-              className="absolute border-2 border-blue-500 bg-blue-500/20 pointer-events-none"
+      <div
+        ref={containerRef}
+        className="flex-1 relative overflow-hidden flex items-center justify-center"
+      >
+        {isReady && (
+          <div
+            ref={imageContainerRef}
+            data-testid="rect-selector-canvas"
+            className="relative cursor-crosshair select-none"
+            style={{
+              transform: `scale(${scale})`,
+              transformOrigin: 'center',
+            }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+          >
+            {/* 画像 */}
+            <img
+              src={imageDataUrl}
+              alt="選択対象"
+              className="pointer-events-none"
               style={{
-                left: currentRect.x * displayScale,
-                top: currentRect.y * displayScale,
-                width: currentRect.width * displayScale,
-                height: currentRect.height * displayScale,
+                maxWidth: containerRef.current?.clientWidth,
+                maxHeight: containerRef.current?.clientHeight,
+                objectFit: 'contain',
               }}
+              crossOrigin="anonymous"
+              draggable={false}
             />
-          )}
-        </div>
+
+            {/* 選択中の矩形（transform内なのでfitScaleで位置計算） */}
+            {currentRect && (
+              <div
+                data-testid="selection-rect"
+                className="absolute border-2 border-blue-500 bg-blue-500/20 pointer-events-none"
+                style={{
+                  left: currentRect.x * fitScale,
+                  top: currentRect.y * fitScale,
+                  width: currentRect.width * fitScale,
+                  height: currentRect.height * fitScale,
+                }}
+              />
+            )}
+          </div>
+        )}
       </div>
+
+      {/* ズームコントロール */}
+      <ZoomControls
+        scale={scale}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onReset={resetZoom}
+      />
     </div>
   )
 }

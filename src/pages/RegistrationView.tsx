@@ -1,21 +1,17 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useStorageStore } from '../stores/storageStore'
 import { Sidebar } from '../components/Sidebar'
 import { RectSelector } from '../components/RectSelector'
-import { SamSelector } from '../components/SamSelector'
-import { LassoSelector } from '../components/LassoSelector'
 import { PolygonSelector } from '../components/PolygonSelector'
 import { ObjectForm } from '../components/ObjectForm'
 import { WarehouseDialog } from '../components/WarehouseDialog'
 import { PhotoDialog } from '../components/PhotoDialog'
-import { ExportImportBar } from '../components/ExportImportBar'
+import { ConflictDialog } from '../components/ConflictDialog'
 import { clipImage, clipImageWithPolygon } from '../utils/imageUtils'
-import { exportData, importData, generateExportFileName } from '../utils/exportImport'
-import { segment, segmentWithLasso, checkSamHealth, polygonToBoundingBox } from '../utils/samApi'
-import type { RectMask, PolygonMask } from '../types/storage'
-import type { Position } from '../utils/samApi'
+import { polygonToBoundingBox } from '../utils/samApi'
+import type { RectMask, PolygonMask, Position } from '../types/storage'
 
-type InputMode = 'rect' | 'sam' | 'lasso' | 'polygon'
+type InputMode = 'rect' | 'polygon'
 
 interface SelectionState {
   mask: RectMask | PolygonMask
@@ -28,14 +24,15 @@ export function RegistrationView() {
     warehouses,
     currentWarehouseId,
     currentPhotoId,
+    versionConflict,
     setCurrentWarehouse,
     setCurrentPhoto,
     setViewMode,
     addObject,
     addWarehouse,
     addPhoto,
-    getAppData,
-    setInitialData,
+    loadWarehouses,
+    clearVersionConflict,
   } = useStorageStore()
 
   const [selectionState, setSelectionState] = useState<SelectionState | null>(null)
@@ -43,16 +40,8 @@ export function RegistrationView() {
   const [isPhotoDialogOpen, setIsPhotoDialogOpen] = useState(false)
   const [photoDialogWarehouseId, setPhotoDialogWarehouseId] = useState<string | null>(null)
 
-  // SAM関連の状態
+  // 入力モード（SAM無効化のため矩形とポリゴンのみ）
   const [inputMode, setInputMode] = useState<InputMode>('rect')
-  const [samAvailable, setSamAvailable] = useState(false)
-  const [samLoading, setSamLoading] = useState(false)
-  const [samError, setSamError] = useState<string | undefined>()
-
-  // SAMサーバーのヘルスチェック
-  useEffect(() => {
-    checkSamHealth().then(setSamAvailable)
-  }, [])
 
   // 現在の倉庫を取得
   const currentWarehouse = warehouses.find((w) => w.id === currentWarehouseId)
@@ -75,9 +64,11 @@ export function RegistrationView() {
     setIsWarehouseDialogOpen(true)
   }
 
-  const handleSaveWarehouse = (name: string, memo: string) => {
-    const id = addWarehouse(name, memo)
-    setCurrentWarehouse(id)
+  const handleSaveWarehouse = async (name: string, memo: string) => {
+    const id = await addWarehouse(name, memo)
+    if (id) {
+      setCurrentWarehouse(id)
+    }
     setIsWarehouseDialogOpen(false)
   }
 
@@ -86,36 +77,14 @@ export function RegistrationView() {
     setIsPhotoDialogOpen(true)
   }
 
-  const handleSavePhoto = (name: string, imageDataUrl: string, width: number, height: number) => {
+  const handleSavePhoto = async (name: string, imageDataUrl: string, width: number, height: number) => {
     if (photoDialogWarehouseId) {
-      const photoId = addPhoto(photoDialogWarehouseId, name, imageDataUrl, width, height)
-      setCurrentPhoto(photoId)
+      const photoId = await addPhoto(photoDialogWarehouseId, name, imageDataUrl, width, height)
+      if (photoId) {
+        setCurrentPhoto(photoId)
+      }
       setIsPhotoDialogOpen(false)
       setPhotoDialogWarehouseId(null)
-    }
-  }
-
-  // エクスポート
-  const handleExport = () => {
-    const appData = getAppData()
-    const json = exportData(appData)
-    const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = generateExportFileName()
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  // インポート
-  const handleImport = (json: string) => {
-    const existingData = getAppData()
-    const result = importData(json, 'overwrite', existingData)
-    if (result.success && result.data) {
-      setInitialData(result.data)
-    } else {
-      alert(result.error || 'インポートに失敗しました')
     }
   }
 
@@ -141,78 +110,7 @@ export function RegistrationView() {
     }
   }
 
-  // SAMでの選択処理
-  const handleSamSelect = async (clickX: number, clickY: number) => {
-    if (!currentPhoto) return
-
-    setSamLoading(true)
-    setSamError(undefined)
-
-    try {
-      const result = await segment(currentPhoto.imageDataUrl, clickX, clickY)
-
-      // ポリゴンマスクを作成
-      const mask: PolygonMask = {
-        type: 'polygon',
-        points: result.polygon,
-      }
-
-      // ポリゴン形状で画像を切り出し（ポリゴン外は透明）
-      const bbox = polygonToBoundingBox(result.polygon)
-      const previewImageDataUrl = await clipImageWithPolygon(
-        currentPhoto.imageDataUrl,
-        result.polygon,
-        bbox
-      )
-
-      const clickPoint = { x: clickX, y: clickY }
-      setSelectionState({ mask, previewImageDataUrl, clickPoint })
-    } catch (error) {
-      const errorObj = error as { error?: string; code?: string }
-      setSamError(errorObj.error || 'セグメンテーションに失敗しました')
-    } finally {
-      setSamLoading(false)
-    }
-  }
-
-  // 投げ縄での選択処理
-  const handleLassoSelect = async (lassoPolygon: Position[]) => {
-    if (!currentPhoto) return
-
-    setSamLoading(true)
-    setSamError(undefined)
-
-    try {
-      const result = await segmentWithLasso(currentPhoto.imageDataUrl, lassoPolygon)
-
-      // ポリゴンマスクを作成
-      const mask: PolygonMask = {
-        type: 'polygon',
-        points: result.polygon,
-      }
-
-      // ポリゴン形状で画像を切り出し（ポリゴン外は透明）
-      const bbox = polygonToBoundingBox(result.polygon)
-      const previewImageDataUrl = await clipImageWithPolygon(
-        currentPhoto.imageDataUrl,
-        result.polygon,
-        bbox
-      )
-
-      // クリックポイントは投げ縄の中心
-      const centerX = lassoPolygon.reduce((sum, p) => sum + p.x, 0) / lassoPolygon.length
-      const centerY = lassoPolygon.reduce((sum, p) => sum + p.y, 0) / lassoPolygon.length
-      const clickPoint = { x: centerX, y: centerY }
-      setSelectionState({ mask, previewImageDataUrl, clickPoint })
-    } catch (error) {
-      const errorObj = error as { error?: string; code?: string }
-      setSamError(errorObj.error || 'セグメンテーションに失敗しました')
-    } finally {
-      setSamLoading(false)
-    }
-  }
-
-  // ポリゴン選択処理（SAMなし）
+  // ポリゴン選択処理
   const handlePolygonSelect = async (polygon: Position[]) => {
     if (!currentPhoto) return
 
@@ -243,13 +141,12 @@ export function RegistrationView() {
 
   const handleCancelSelection = () => {
     setSelectionState(null)
-    setSamError(undefined)
   }
 
-  const handleSaveObject = (name: string, memo: string) => {
+  const handleSaveObject = async (name: string, memo: string) => {
     if (!currentWarehouseId || !currentPhotoId || !selectionState) return
 
-    addObject(
+    await addObject(
       currentWarehouseId,
       currentPhotoId,
       name,
@@ -299,55 +196,23 @@ export function RegistrationView() {
                 矩形選択
               </button>
               <button
-                onClick={() => setInputMode('sam')}
-                disabled={!samAvailable}
-                className={`px-3 py-1 text-sm rounded ${
-                  inputMode === 'sam'
-                    ? 'bg-green-600 text-white'
-                    : samAvailable
-                      ? 'text-gray-600 hover:bg-gray-100'
-                      : 'text-gray-400 cursor-not-allowed'
-                }`}
-                title={samAvailable ? 'AI検出' : 'SAMサーバーに接続できません'}
-              >
-                AI検出
-              </button>
-              <button
-                onClick={() => setInputMode('lasso')}
-                disabled={!samAvailable}
-                className={`px-3 py-1 text-sm rounded ${
-                  inputMode === 'lasso'
-                    ? 'bg-green-600 text-white'
-                    : samAvailable
-                      ? 'text-gray-600 hover:bg-gray-100'
-                      : 'text-gray-400 cursor-not-allowed'
-                }`}
-                title={samAvailable ? 'AI投げ縄' : 'SAMサーバーに接続できません'}
-              >
-                AI投げ縄
-              </button>
-              <button
                 onClick={() => setInputMode('polygon')}
                 className={`px-3 py-1 text-sm rounded ${
                   inputMode === 'polygon'
                     ? 'bg-green-600 text-white'
                     : 'text-gray-600 hover:bg-gray-100'
                 }`}
-                title="ポリゴン選択"
               >
                 ポリゴン
               </button>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <ExportImportBar onExport={handleExport} onImport={handleImport} />
-            <button
-              onClick={handleSwitchToView}
-              className="px-4 py-2 text-sm font-medium text-white bg-gray-600 rounded hover:bg-gray-700"
-            >
-              閲覧モード
-            </button>
-          </div>
+          <button
+            onClick={handleSwitchToView}
+            className="px-4 py-2 text-sm font-medium text-white bg-gray-600 rounded hover:bg-gray-700"
+          >
+            閲覧モード
+          </button>
         </div>
 
         {/* 選択エリアまたはフォーム */}
@@ -364,26 +229,6 @@ export function RegistrationView() {
                 onCancel={handleCancelSelection}
               />
             </div>
-          ) : inputMode === 'sam' ? (
-            <SamSelector
-              imageDataUrl={currentPhoto.imageDataUrl}
-              imageWidth={currentPhoto.width}
-              imageHeight={currentPhoto.height}
-              onSelect={handleSamSelect}
-              onCancel={handleSwitchToView}
-              isLoading={samLoading}
-              error={samError}
-            />
-          ) : inputMode === 'lasso' ? (
-            <LassoSelector
-              imageDataUrl={currentPhoto.imageDataUrl}
-              imageWidth={currentPhoto.width}
-              imageHeight={currentPhoto.height}
-              onSelect={handleLassoSelect}
-              onCancel={handleSwitchToView}
-              isLoading={samLoading}
-              error={samError}
-            />
           ) : inputMode === 'polygon' ? (
             <PolygonSelector
               imageDataUrl={currentPhoto.imageDataUrl}
@@ -419,6 +264,16 @@ export function RegistrationView() {
           setPhotoDialogWarehouseId(null)
         }}
         onSave={handleSavePhoto}
+      />
+
+      {/* バージョン競合ダイアログ */}
+      <ConflictDialog
+        isOpen={versionConflict !== null}
+        onReload={async () => {
+          await loadWarehouses()
+          clearVersionConflict()
+        }}
+        onCancel={clearVersionConflict}
       />
     </div>
   )

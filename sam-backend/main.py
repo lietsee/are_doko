@@ -1,6 +1,6 @@
 """
-SAM (Segment Anything Model) Backend Server
-are_doko アプリ用のセグメンテーションAPI
+are_doko Backend Server
+Supabase連携 + SAMセグメンテーションAPI
 """
 
 import base64
@@ -14,12 +14,19 @@ import numpy as np
 from PIL import Image
 
 from sam_service import SAMService
+from routers import warehouses_router, photos_router, objects_router
+from utils import ensure_bucket_exists
 
 app = FastAPI(
-    title="are_doko SAM API",
-    description="Segment Anything Model API for are_doko app",
-    version="1.0.0",
+    title="are_doko API",
+    description="are_doko app backend API",
+    version="2.0.0",
 )
+
+# ルーターを登録
+app.include_router(warehouses_router)
+app.include_router(photos_router)
+app.include_router(objects_router)
 
 # CORS設定（フロントエンドからのアクセスを許可）
 app.add_middleware(
@@ -29,6 +36,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """起動時にStorageバケットを確認・作成"""
+    ensure_bucket_exists()
 
 # SAMサービスのインスタンス（遅延初期化）
 sam_service: Optional[SAMService] = None

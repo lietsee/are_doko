@@ -1,72 +1,58 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import './App.css'
 import { useStorageStore } from './stores/storageStore'
+import { useAuthStore } from './stores/authStore'
 import { MainView } from './pages/MainView'
 import { RegistrationView } from './pages/RegistrationView'
-import { loadAppData, saveAppData } from './utils/idb'
-import type { AppData } from './types/storage'
+import { LoginPage } from './pages/LoginPage'
 
 function App() {
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // 認証状態
+  const { user, loading: authLoading, initialize: initAuth } = useAuthStore()
 
   const viewMode = useStorageStore((state) => state.viewMode)
-  const warehouses = useStorageStore((state) => state.warehouses)
-  const version = useStorageStore((state) => state.version)
-  const createdAt = useStorageStore((state) => state.createdAt)
-  const updatedAt = useStorageStore((state) => state.updatedAt)
-  const setInitialData = useStorageStore((state) => state.setInitialData)
+  const loading = useStorageStore((state) => state.loading)
+  const error = useStorageStore((state) => state.error)
+  const loadWarehouses = useStorageStore((state) => state.loadWarehouses)
 
-  // 初回読み込み
+  // 認証の初期化
   useEffect(() => {
-    async function load() {
-      try {
-        const data = await loadAppData()
-        if (data) {
-          setInitialData(data)
-        }
-      } catch (err) {
-        console.error('Failed to load data:', err)
-        setError('データの読み込みに失敗しました')
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    load()
-  }, [setInitialData])
+    initAuth()
+  }, [initAuth])
 
-  // データ変更時に自動保存
+  // 初回データ読み込み（認証済みの場合のみ）
   useEffect(() => {
-    if (isLoading) return
+    if (authLoading || !user) return
+    loadWarehouses()
+  }, [authLoading, user, loadWarehouses])
 
-    async function save() {
-      try {
-        const data: AppData = {
-          version,
-          warehouses,
-          createdAt,
-          updatedAt,
-        }
-        await saveAppData(data)
-      } catch (err) {
-        console.error('Failed to save data:', err)
-      }
-    }
-    save()
-  }, [warehouses, version, createdAt, updatedAt, isLoading])
-
-  if (isLoading) {
+  // 認証中
+  if (authLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-100">
-        <div className="text-gray-600">読み込み中...</div>
+        <div className="text-gray-600">認証確認中...</div>
       </div>
     )
   }
 
-  if (error) {
+  // 未認証
+  if (!user) {
+    return <LoginPage />
+  }
+
+  // 初回ロード中のエラー
+  if (error && !loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-100">
-        <div className="text-red-600">{error}</div>
+        <div className="text-center">
+          <div className="text-red-600 mb-4">{error}</div>
+          <button
+            onClick={() => loadWarehouses()}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            再読み込み
+          </button>
+        </div>
       </div>
     )
   }

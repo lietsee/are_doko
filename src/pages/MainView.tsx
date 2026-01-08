@@ -6,10 +6,8 @@ import { ObjectPopup } from '../components/ObjectPopup'
 import { WarehouseDialog } from '../components/WarehouseDialog'
 import { PhotoDialog } from '../components/PhotoDialog'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { ConflictDialog } from '../components/ConflictDialog'
 import { ObjectForm } from '../components/ObjectForm'
-import { ExportImportBar } from '../components/ExportImportBar'
-import { ImportDialog } from '../components/ImportDialog'
-import { exportData, importData, generateExportFileName } from '../utils/exportImport'
 import type { StorageObject } from '../types/storage'
 
 export function MainView() {
@@ -18,6 +16,7 @@ export function MainView() {
     currentWarehouseId,
     currentPhotoId,
     selectedObjectId,
+    versionConflict,
     setCurrentWarehouse,
     setCurrentPhoto,
     setViewMode,
@@ -32,8 +31,8 @@ export function MainView() {
     deleteObject,
     nextPhoto,
     prevPhoto,
-    getAppData,
-    setInitialData,
+    loadWarehouses,
+    clearVersionConflict,
   } = useStorageStore()
 
   // ポップアップ・ダイアログ状態
@@ -48,7 +47,6 @@ export function MainView() {
   const [deletePhotoTarget, setDeletePhotoTarget] = useState<{ warehouseId: string; photoId: string } | null>(null)
   const [editingPhotoTarget, setEditingPhotoTarget] = useState<{ warehouseId: string; photoId: string } | null>(null)
   const [editingPhotoName, setEditingPhotoName] = useState('')
-  const [importJson, setImportJson] = useState<string | null>(null)
 
   // 現在の倉庫を取得
   const currentWarehouse = warehouses.find((w) => w.id === currentWarehouseId)
@@ -82,12 +80,14 @@ export function MainView() {
     setIsWarehouseDialogOpen(true)
   }
 
-  const handleSaveWarehouse = (name: string, memo: string) => {
+  const handleSaveWarehouse = async (name: string, memo: string) => {
     if (editingWarehouseId) {
-      updateWarehouse(editingWarehouseId, { name, memo })
+      await updateWarehouse(editingWarehouseId, { name, memo })
     } else {
-      const id = addWarehouse(name, memo)
-      setCurrentWarehouse(id)
+      const id = await addWarehouse(name, memo)
+      if (id) {
+        setCurrentWarehouse(id)
+      }
     }
     setIsWarehouseDialogOpen(false)
     setEditingWarehouseId(null)
@@ -97,9 +97,9 @@ export function MainView() {
     setDeleteWarehouseTarget(id)
   }
 
-  const handleConfirmDeleteWarehouse = () => {
+  const handleConfirmDeleteWarehouse = async () => {
     if (deleteWarehouseTarget) {
-      deleteWarehouse(deleteWarehouseTarget)
+      await deleteWarehouse(deleteWarehouseTarget)
       setDeleteWarehouseTarget(null)
     }
   }
@@ -110,10 +110,12 @@ export function MainView() {
     setIsPhotoDialogOpen(true)
   }
 
-  const handleSavePhoto = (name: string, imageDataUrl: string, width: number, height: number) => {
+  const handleSavePhoto = async (name: string, imageDataUrl: string, width: number, height: number) => {
     if (photoDialogWarehouseId) {
-      const photoId = addPhoto(photoDialogWarehouseId, name, imageDataUrl, width, height)
-      setCurrentPhoto(photoId)
+      const photoId = await addPhoto(photoDialogWarehouseId, name, imageDataUrl, width, height)
+      if (photoId) {
+        setCurrentPhoto(photoId)
+      }
       setIsPhotoDialogOpen(false)
       setPhotoDialogWarehouseId(null)
     }
@@ -129,9 +131,9 @@ export function MainView() {
     }
   }
 
-  const handleSaveEditedPhoto = () => {
+  const handleSaveEditedPhoto = async () => {
     if (editingPhotoTarget && editingPhotoName.trim()) {
-      updatePhoto(editingPhotoTarget.warehouseId, editingPhotoTarget.photoId, { name: editingPhotoName.trim() })
+      await updatePhoto(editingPhotoTarget.warehouseId, editingPhotoTarget.photoId, { name: editingPhotoName.trim() })
       setEditingPhotoTarget(null)
       setEditingPhotoName('')
     }
@@ -147,9 +149,9 @@ export function MainView() {
     setDeletePhotoTarget({ warehouseId, photoId })
   }
 
-  const handleConfirmDeletePhoto = () => {
+  const handleConfirmDeletePhoto = async () => {
     if (deletePhotoTarget) {
-      deletePhoto(deletePhotoTarget.warehouseId, deletePhotoTarget.photoId)
+      await deletePhoto(deletePhotoTarget.warehouseId, deletePhotoTarget.photoId)
       setDeletePhotoTarget(null)
     }
   }
@@ -170,9 +172,9 @@ export function MainView() {
     setPopupObject(null)
   }
 
-  const handleSaveEditedObject = (name: string, memo: string) => {
+  const handleSaveEditedObject = async (name: string, memo: string) => {
     if (editingObject && currentWarehouseId && currentPhotoId) {
-      updateObject(currentWarehouseId, currentPhotoId, editingObject.id, { name, memo })
+      await updateObject(currentWarehouseId, currentPhotoId, editingObject.id, { name, memo })
       setEditingObject(null)
       setSelectedObjectId(null)
     }
@@ -186,9 +188,9 @@ export function MainView() {
     setDeleteTarget(object)
   }
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (deleteTarget && currentWarehouseId && currentPhotoId) {
-      deleteObject(currentWarehouseId, currentPhotoId, deleteTarget.id)
+      await deleteObject(currentWarehouseId, currentPhotoId, deleteTarget.id)
       setDeleteTarget(null)
       setPopupObject(null)
       setSelectedObjectId(null)
@@ -201,58 +203,6 @@ export function MainView() {
 
   const handleSwitchToRegistration = () => {
     setViewMode('registration')
-  }
-
-  // エクスポート
-  const handleExport = () => {
-    const appData = getAppData()
-    const json = exportData(appData)
-    const blob = new Blob([json], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = generateExportFileName()
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  // インポート
-  const handleImport = (json: string) => {
-    // JSONを検証してからダイアログを表示
-    try {
-      JSON.parse(json)
-      setImportJson(json)
-    } catch {
-      alert('JSONの解析に失敗しました')
-    }
-  }
-
-  const handleImportOverwrite = () => {
-    if (!importJson) return
-    const existingData = getAppData()
-    const result = importData(importJson, 'overwrite', existingData)
-    if (result.success && result.data) {
-      setInitialData(result.data)
-    } else {
-      alert(result.error || 'インポートに失敗しました')
-    }
-    setImportJson(null)
-  }
-
-  const handleImportMerge = () => {
-    if (!importJson) return
-    const existingData = getAppData()
-    const result = importData(importJson, 'merge', existingData)
-    if (result.success && result.data) {
-      setInitialData(result.data)
-    } else {
-      alert(result.error || 'インポートに失敗しました')
-    }
-    setImportJson(null)
-  }
-
-  const handleImportCancel = () => {
-    setImportJson(null)
   }
 
   return (
@@ -279,15 +229,12 @@ export function MainView() {
           <div className="text-gray-700 font-medium">
             {currentWarehouse?.name || 'are-doko'}
           </div>
-          <div className="flex items-center gap-4">
-            <ExportImportBar onExport={handleExport} onImport={handleImport} />
-            <button
-              onClick={handleSwitchToRegistration}
-              className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded hover:bg-green-700"
-            >
-              登録モード
-            </button>
-          </div>
+          <button
+            onClick={handleSwitchToRegistration}
+            className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded hover:bg-green-700"
+          >
+            登録モード
+          </button>
         </div>
 
         {/* 写真ビューアまたはプレースホルダー */}
@@ -438,12 +385,14 @@ export function MainView() {
         </div>
       )}
 
-      {/* インポートモード選択ダイアログ */}
-      <ImportDialog
-        isOpen={importJson !== null}
-        onOverwrite={handleImportOverwrite}
-        onMerge={handleImportMerge}
-        onCancel={handleImportCancel}
+      {/* バージョン競合ダイアログ */}
+      <ConflictDialog
+        isOpen={versionConflict !== null}
+        onReload={async () => {
+          await loadWarehouses()
+          clearVersionConflict()
+        }}
+        onCancel={clearVersionConflict}
       />
     </div>
   )

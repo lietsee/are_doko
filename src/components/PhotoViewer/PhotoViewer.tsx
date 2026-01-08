@@ -1,5 +1,7 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useEffect } from 'react'
 import type { Photo, StorageObject } from '../../types/storage'
+import { useImageZoom } from '../../hooks/useImageZoom'
+import { ZoomControls } from '../ZoomControls'
 
 interface PhotoViewerProps {
   photo: Photo
@@ -20,36 +22,25 @@ export function PhotoViewer({
   hasPrev,
   hasNext,
 }: PhotoViewerProps) {
-  const imgRef = useRef<HTMLImageElement>(null)
-  const [scale, setScale] = useState(1)
+  const containerRef = useRef<HTMLDivElement>(null)
 
-  // 画像ロード・リサイズ時にスケール計算
+  const { scale, displayScale, isReady, zoomIn, zoomOut, resetZoom, handleWheel } = useImageZoom({
+    imageWidth: photo.width,
+    imageHeight: photo.height,
+    containerRef,
+  })
+
+  // fitScaleを計算（transform内の要素はfitScaleで位置計算）
+  const fitScale = displayScale / scale
+
+  // マウスホイールでズーム
   useEffect(() => {
-    const updateScale = () => {
-      if (imgRef.current && photo.width > 0) {
-        const displayWidth = imgRef.current.clientWidth
-        setScale(displayWidth / photo.width)
-      }
-    }
+    const container = containerRef.current
+    if (!container) return
 
-    // 画像ロード完了時
-    const img = imgRef.current
-    if (img) {
-      if (img.complete) {
-        updateScale()
-      } else {
-        img.addEventListener('load', updateScale)
-      }
-    }
-
-    // リサイズ時
-    window.addEventListener('resize', updateScale)
-
-    return () => {
-      window.removeEventListener('resize', updateScale)
-      img?.removeEventListener('load', updateScale)
-    }
-  }, [photo])
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => container.removeEventListener('wheel', handleWheel)
+  }, [handleWheel])
 
   return (
     <div className="flex flex-col h-full bg-gray-900">
@@ -77,28 +68,52 @@ export function PhotoViewer({
       </div>
 
       {/* 写真エリア */}
-      <div className="flex-1 relative overflow-auto flex items-center justify-center">
-        <div className="relative inline-block">
-          {/* 写真 */}
-          <img
-            ref={imgRef}
-            src={photo.imageDataUrl}
-            alt={photo.name}
-            className="max-w-full max-h-full object-contain"
-          />
-
-          {/* オブジェクトオーバーレイ */}
-          {photo.objects.map((obj) => (
-            <ObjectOverlay
-              key={obj.id}
-              object={obj}
-              isSelected={selectedObjectId === obj.id}
-              onClick={() => onObjectClick(obj)}
-              scale={scale}
+      <div
+        ref={containerRef}
+        className="flex-1 relative overflow-hidden flex items-center justify-center"
+      >
+        {isReady && (
+          <div
+            className="relative"
+            style={{
+              transform: `scale(${scale})`,
+              transformOrigin: 'center',
+            }}
+          >
+            {/* 写真 */}
+            <img
+              src={photo.imageDataUrl}
+              alt={photo.name}
+              className="max-w-full max-h-full object-contain"
+              style={{
+                maxWidth: containerRef.current?.clientWidth,
+                maxHeight: containerRef.current?.clientHeight,
+              }}
+              crossOrigin="anonymous"
+              draggable={false}
             />
-          ))}
-        </div>
+
+            {/* オブジェクトオーバーレイ */}
+            {photo.objects.map((obj) => (
+              <ObjectOverlay
+                key={obj.id}
+                object={obj}
+                isSelected={selectedObjectId === obj.id}
+                onClick={() => onObjectClick(obj)}
+                fitScale={fitScale}
+              />
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* ズームコントロール */}
+      <ZoomControls
+        scale={scale}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onReset={resetZoom}
+      />
     </div>
   )
 }
@@ -107,10 +122,10 @@ interface ObjectOverlayProps {
   object: StorageObject
   isSelected: boolean
   onClick: () => void
-  scale: number
+  fitScale: number  // transform内なのでfitScaleを使用
 }
 
-function ObjectOverlay({ object, isSelected, onClick, scale }: ObjectOverlayProps) {
+function ObjectOverlay({ object, isSelected, onClick, fitScale }: ObjectOverlayProps) {
   const { mask } = object
 
   if (mask.type === 'rect') {
@@ -122,10 +137,10 @@ function ObjectOverlay({ object, isSelected, onClick, scale }: ObjectOverlayProp
           isSelected ? 'ring-4 ring-yellow-400' : ''
         }`}
         style={{
-          left: mask.x * scale,
-          top: mask.y * scale,
-          width: mask.width * scale,
-          height: mask.height * scale,
+          left: mask.x * fitScale,
+          top: mask.y * fitScale,
+          width: mask.width * fitScale,
+          height: mask.height * fitScale,
         }}
         aria-label={object.name}
       />
@@ -134,12 +149,12 @@ function ObjectOverlay({ object, isSelected, onClick, scale }: ObjectOverlayProp
 
   // ポリゴンの場合（SVGで描画）
   if (mask.type === 'polygon') {
-    // スケール適用したポリゴン座標
-    const scaledPoints = mask.points.map((p) => `${p.x * scale},${p.y * scale}`).join(' ')
-    const minX = Math.min(...mask.points.map((p) => p.x)) * scale
-    const minY = Math.min(...mask.points.map((p) => p.y)) * scale
-    const maxX = Math.max(...mask.points.map((p) => p.x)) * scale
-    const maxY = Math.max(...mask.points.map((p) => p.y)) * scale
+    // スケール適用したポリゴン座標（fitScale基準）
+    const scaledPoints = mask.points.map((p) => `${p.x * fitScale},${p.y * fitScale}`).join(' ')
+    const minX = Math.min(...mask.points.map((p) => p.x)) * fitScale
+    const minY = Math.min(...mask.points.map((p) => p.y)) * fitScale
+    const maxX = Math.max(...mask.points.map((p) => p.x)) * fitScale
+    const maxY = Math.max(...mask.points.map((p) => p.y)) * fitScale
 
     return (
       <button
